@@ -14,7 +14,7 @@
 
 import * as Tone from "tone";
 import { clamp } from "@/lib/utils";
-import { checkMicrophonePermission } from "./micPermission";
+import { getMicPermission } from "./micPermission";
 
 export function checkMicSupport(): boolean {
   return (
@@ -79,12 +79,14 @@ export class TrackRecorder {
     }
     if (this._isRecording) return;
 
-    // Verify microphone permission is granted before requesting the stream.
-    const micState = await checkMicrophonePermission();
+    // Verify microphone permission before requesting the stream. The UI layer
+    // must call getMicPermission() first and only call recorder.start() after
+    // permission is granted; these guards exist as defense-in-depth.
+    const micState = await getMicPermission();
     if (micState === "denied") {
       throw new Error("microphone-denied");
     }
-    if (micState === "prompt") {
+    if (micState === "prompt" || micState === "unknown") {
       // The UI layer (MicPermissionDialog) must handle this case and call
       // requestMicrophoneAccess() before retrying start().
       throw new Error("microphone-prompt");

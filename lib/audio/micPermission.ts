@@ -23,7 +23,7 @@ const mapPermissionState = (state: PermissionState): MicPermissionState => {
  * partial support) or when the browser rejects the "microphone" name
  * (older Safari throws a TypeError).
  */
-export async function checkMicrophonePermission(): Promise<MicPermissionState> {
+export async function getMicPermission(): Promise<MicPermissionState> {
   if (typeof navigator === "undefined" || !navigator.permissions?.query) {
     return "unknown";
   }

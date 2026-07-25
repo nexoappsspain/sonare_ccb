@@ -23,7 +23,6 @@ import {
   ArrowLeft,
   Circle,
   Download,
-  Headphones,
   Loader2,
   Piano,
   Plus,
@@ -43,7 +42,7 @@ import { audioEngine } from "@/lib/audio/engine";
 import { metronome } from "@/lib/audio/metronome";
 import { checkMicSupport, TrackRecorder } from "@/lib/audio/recorder";
 import {
-  checkMicrophonePermission,
+  getMicPermission,
   requestMicrophoneAccess,
 } from "@/lib/audio/micPermission";
 import {
@@ -124,7 +123,6 @@ export function StudioShell({ projectId }: StudioShellProps) {
   const removeTrack = useProjectStore((state) => state.removeTrack);
 
   const [notFound, setNotFound] = useState(false);
-  const [audioStarted, setAudioStarted] = useState(false);
   const [micDialogMode, setMicDialogMode] = useState<"prompt" | "denied" | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [metronomeOn, setMetronomeOn] = useState(false);
@@ -290,11 +288,6 @@ export function StudioShell({ projectId }: StudioShellProps) {
     }
   }, []);
 
-  const startAudio = useCallback(async () => {
-    await audioEngine.ensureStarted();
-    setAudioStarted(true);
-  }, []);
-
   const toggleMetronome = useCallback(async () => {
     if (metronomeOnRef.current) {
       metronome.stop();
@@ -458,18 +451,20 @@ export function StudioShell({ projectId }: StudioShellProps) {
       return;
     }
 
-    // Check microphone permission before doing anything else.
-    const micState = await checkMicrophonePermission();
+    // Check microphone permission before doing anything else. Browsers that do
+    // not support the Permissions API return "unknown" — treat that as "prompt"
+    // so the user is never hit with a native permission request without warning.
+    const micState = await getMicPermission();
     if (micState === "denied") {
       setMicDialogMode("denied");
       return;
     }
-    if (micState === "prompt") {
+    if (micState === "prompt" || micState === "unknown") {
       setMicDialogMode("prompt");
       return;
     }
 
-    // Permission already granted (or unknown on unsupported browsers) — proceed.
+    // Permission already granted — proceed.
     await startRecordingAfterPermission();
   }, [t, toast]);
 
@@ -976,28 +971,6 @@ export function StudioShell({ projectId }: StudioShellProps) {
         />
       )}
 
-      {/* AudioContext activation overlay — blocks the studio until the user
-          clicks, ensuring Tone.start() is called from a genuine user gesture. */}
-      {!audioStarted && (
-        <div
-          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-6"
-          onClick={() => void startAudio()}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              void startAudio();
-            }
-          }}
-        >
-          <Headphones className="mb-4 h-12 w-12 text-neutral-300" aria-hidden="true" />
-          <p className="mb-2 text-center text-lg font-semibold text-neutral-100">
-            {t("audioStartTitle")}
-          </p>
-          <p className="text-center text-sm text-neutral-400">{t("audioStartHint")}</p>
-        </div>
-      )}
     </div>
   );
 }
