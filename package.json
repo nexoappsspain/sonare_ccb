@@ -1,0 +1,46 @@
+{
+  "name": "ccb-sonare-music",
+  "version": "3.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate || true"
+  },
+  "dependencies": {
+    "next": "14.2.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "next-intl": "3.20.0",
+    "next-auth": "5.0.0-beta.25",
+    "@prisma/client": "5.20.0",
+    "prisma": "5.20.0",
+    "bcryptjs": "2.4.3",
+    "tone": "15.0.4",
+    "wavesurfer.js": "7.8.6",
+    "zustand": "4.5.5",
+    "idb-keyval": "6.2.1",
+    "zod": "3.23.8",
+    "lamejs": "1.2.1",
+    "wav-encoder": "1.3.0",
+    "lucide-react": "0.447.0",
+    "clsx": "2.1.1",
+    "tailwind-merge": "2.5.2"
+  },
+  "devDependencies": {
+    "typescript": "5.6.2",
+    "@types/node": "20.16.10",
+    "@types/react": "18.3.10",
+    "@types/react-dom": "18.3.0",
+    "@types/bcryptjs": "2.4.6",
+    "tailwindcss": "3.4.13",
+    "postcss": "8.4.47",
+    "autoprefixer": "10.4.20",
+    "eslint": "8.57.1",
+    "eslint-config-next": "14.2.15",
+    "@ducanh2912/next-pwa": "10.2.8"
+  }
+}
