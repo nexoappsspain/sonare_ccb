@@ -14,6 +14,7 @@
 
 import * as Tone from "tone";
 import { clamp } from "@/lib/utils";
+import { checkMicrophonePermission } from "./micPermission";
 
 export function checkMicSupport(): boolean {
   return (
@@ -77,6 +78,17 @@ export class TrackRecorder {
       throw new Error("Este navegador não suporta gravação de áudio.");
     }
     if (this._isRecording) return;
+
+    // Verify microphone permission is granted before requesting the stream.
+    const micState = await checkMicrophonePermission();
+    if (micState === "denied") {
+      throw new Error("microphone-denied");
+    }
+    if (micState === "prompt") {
+      // The UI layer (MicPermissionDialog) must handle this case and call
+      // requestMicrophoneAccess() before retrying start().
+      throw new Error("microphone-prompt");
+    }
 
     await Tone.start();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });

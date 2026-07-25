@@ -114,9 +114,12 @@ export class AudioEngine {
   /**
    * Decodes the blob and builds the full per-track chain. If the transport
    * is already playing, the clip joins at the correct position immediately.
+   *
+   * NOTE: Does NOT call ensureStarted(). The AudioContext must already be
+   * running (started by a user gesture via the AudioGate overlay) before
+   * this method is called.
    */
   async loadTrack(track: Track, blob: Blob): Promise<void> {
-    await this.ensureStarted();
     if (typeof window === "undefined" || !this.master) return;
 
     this.unloadTrack(track.id);
