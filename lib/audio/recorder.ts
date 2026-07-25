@@ -56,6 +56,38 @@ const RECORD_GAIN = 2.5;
 const pickMimeType = (): string =>
   MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? "";
 
+/**
+ * Switches the browser audio session to "playback-and-record" while recording
+ * on mobile. Without this, activating the microphone can force the OS to move
+ * playback from headphones/earphones back to the device speaker, making it
+ * impossible to monitor the backing track while overdubbing.
+ */
+class RecordingAudioSession {
+  private previousType: AudioSession["type"] | null = null;
+
+  enter(): void {
+    const session = navigator.audioSession;
+    if (!session) return;
+    this.previousType = session.type;
+    try {
+      session.type = "playback-and-record";
+    } catch {
+      // Some browsers expose the API but reject the type change — ignore.
+    }
+  }
+
+  leave(): void {
+    const session = navigator.audioSession;
+    if (!session || !this.previousType) return;
+    try {
+      session.type = this.previousType;
+    } catch {
+      // Ignore restore failures.
+    }
+    this.previousType = null;
+  }
+}
+
 export class TrackRecorder {
   private stream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
@@ -69,6 +101,8 @@ export class TrackRecorder {
 
   private monitorMedia: Tone.UserMedia | null = null;
   private monitorGain: Tone.Gain | null = null;
+
+  private audioSession = new RecordingAudioSession();
 
   private _isRecording = false;
   private countInAborted = false;
@@ -106,6 +140,9 @@ export class TrackRecorder {
     // inside the same interaction.
     void Tone.start();
     await Tone.start();
+
+    // Keep playback routed to headphones/earphones while the mic is open.
+    this.audioSession.enter();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
     this.stream = stream;
     this.countInAborted = false;
@@ -264,6 +301,8 @@ export class TrackRecorder {
     this.mediaStreamDestination = null;
     this.mediaRecorder = null;
     this.chunks = [];
+    // Restore the previous audio session so normal playback resumes.
+    this.audioSession.leave();
   }
 
   dispose(): void {
