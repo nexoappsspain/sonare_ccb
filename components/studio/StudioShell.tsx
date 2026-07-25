@@ -281,6 +281,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   /* ------------------------------ Transport ------------------------------- */
 
   const togglePlay = useCallback(() => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     if (audioEngine.state === "started") {
       audioEngine.pause();
     } else {
@@ -289,6 +291,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   }, []);
 
   const toggleMetronome = useCallback(async () => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     if (metronomeOnRef.current) {
       metronome.stop();
       setMetronomeOn(false);
@@ -441,6 +445,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   }, [loadRecordedBlob, tErrors, toast]);
 
   const startRecording = useCallback(async () => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     const state = useProjectStore.getState();
     const currentProject = state.project;
     if (!currentProject || startingRecordingRef.current || recorderRef.current?.isRecording) {
@@ -470,6 +476,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
 
   /** Actual recording logic, called after mic permission is confirmed. */
   const startRecordingAfterPermission = useCallback(async () => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     const state = useProjectStore.getState();
     const currentProject = state.project;
     if (!currentProject || startingRecordingRef.current || recorderRef.current?.isRecording) {
@@ -563,6 +571,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
 
   const importFiles = useCallback(
     async (files: File[]) => {
+      // Resume the AudioContext synchronously while still inside the user gesture.
+      void Tone.start();
       if (files.length === 0) return;
       await audioEngine.ensureStarted();
       for (const file of files) {
@@ -612,6 +622,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   /* --------------------------------- MIDI --------------------------------- */
 
   const handleMidiNote = useCallback((note: number, velocity: number, type: "on" | "off") => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     const { project: currentProject, selectedTrackId } = useProjectStore.getState();
     const track = currentProject?.tracks.find(
       (candidate) => candidate.id === selectedTrackId && candidate.kind === "midi",
@@ -637,6 +649,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   }, []);
 
   const connectMidi = useCallback(async () => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     if (!isMidiSupported()) {
       toast.error(t("midiNotSupported"));
       return;
@@ -668,6 +682,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   }, [handleMidiNote, t, toast]);
 
   const addMidiTrack = useCallback(() => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
     const state = useProjectStore.getState();
     if (!state.project) return;
     state.addTrack({ name: t("midiTrack"), kind: "midi", samplerId: "acousticPiano" });

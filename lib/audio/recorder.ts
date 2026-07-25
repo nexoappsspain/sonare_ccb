@@ -92,19 +92,30 @@ export class TrackRecorder {
       throw new Error("microphone-prompt");
     }
 
+    // Start/resume Tone immediately. The caller must invoke this from a user
+    // gesture; we also synchronously request resume here so the browser sees it
+    // inside the same interaction.
+    void Tone.start();
     await Tone.start();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
     this.stream = stream;
     this.countInAborted = false;
 
-    // Level meter on the shared Tone AudioContext. Narrow the union type:
-    // createMediaStreamSource exists only on a real-time AudioContext.
-    const rawContext = Tone.getContext().rawContext;
-    if (typeof AudioContext === "undefined" || !(rawContext instanceof AudioContext)) {
+    // Level meter on the shared Tone AudioContext. Use duck typing instead of
+    // instanceof to avoid false negatives when the global AudioContext reference
+    // differs from the one Tone.js used (e.g. polyfills, HMR, strict bundles).
+    const rawContext = Tone.getContext().rawContext as AudioContext | OfflineAudioContext;
+    const realtimeContext =
+      rawContext &&
+      typeof (rawContext as AudioContext).createMediaStreamSource === "function" &&
+      rawContext.state !== "closed"
+        ? (rawContext as AudioContext)
+        : null;
+    if (!realtimeContext) {
       throw new Error("AudioContext em tempo real indisponível.");
     }
-    this.sourceNode = rawContext.createMediaStreamSource(stream);
-    this.analyser = rawContext.createAnalyser();
+    this.sourceNode = realtimeContext.createMediaStreamSource(stream);
+    this.analyser = realtimeContext.createAnalyser();
     this.analyser.fftSize = 2048;
     this.sourceNode.connect(this.analyser);
     this.analyserData = new Uint8Array(this.analyser.fftSize);
