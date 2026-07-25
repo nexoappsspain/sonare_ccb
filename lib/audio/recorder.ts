@@ -103,6 +103,7 @@ export class TrackRecorder {
   private monitorGain: Tone.Gain | null = null;
 
   private audioSession = new RecordingAudioSession();
+  private keepAliveSource: AudioBufferSourceNode | null = null;
 
   private _isRecording = false;
   private countInAborted = false;
@@ -143,6 +144,7 @@ export class TrackRecorder {
 
     // Keep playback routed to headphones/earphones while the mic is open.
     this.audioSession.enter();
+    this.startKeepAlive();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
     this.stream = stream;
     this.countInAborted = false;
@@ -281,6 +283,43 @@ export class TrackRecorder {
     this.monitorGain = null;
   }
 
+  /**
+   * Plays a looping silent buffer through the AudioContext destination while
+   * the microphone is open. On many phones, opening the mic causes the OS to
+   * switch playback from headphones to the device speaker; keeping an active
+   * playback source makes the OS treat the session as media playback and
+   * preserves the headphone route.
+   */
+  private startKeepAlive(): void {
+    const rawContext = Tone.getContext().rawContext as AudioContext | OfflineAudioContext;
+    const ctx =
+      rawContext &&
+      typeof (rawContext as AudioContext).createBufferSource === "function" &&
+      rawContext.state !== "closed"
+        ? (rawContext as AudioContext)
+        : null;
+    if (!ctx) return;
+
+    this.stopKeepAlive();
+    const buffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    this.keepAliveSource = ctx.createBufferSource();
+    this.keepAliveSource.buffer = buffer;
+    this.keepAliveSource.loop = true;
+    this.keepAliveSource.connect(ctx.destination);
+    this.keepAliveSource.start();
+  }
+
+  private stopKeepAlive(): void {
+    if (!this.keepAliveSource) return;
+    try {
+      this.keepAliveSource.stop();
+    } catch {
+      // Already stopped.
+    }
+    this.keepAliveSource.disconnect();
+    this.keepAliveSource = null;
+  }
+
   /* ------------------------------- Teardown ------------------------------ */
 
   private teardownCapture(): void {
@@ -303,6 +342,7 @@ export class TrackRecorder {
     this.chunks = [];
     // Restore the previous audio session so normal playback resumes.
     this.audioSession.leave();
+    this.stopKeepAlive();
   }
 
   dispose(): void {
