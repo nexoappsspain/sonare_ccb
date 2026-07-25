@@ -46,6 +46,13 @@ const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   autoGainControl: false,
 };
 
+/**
+ * Digital gain applied to the mic signal before encoding. Phones often capture
+ * very quietly when voice processing is disabled, so a moderate boost makes
+ * the recording usable without forcing the user to max every fader.
+ */
+const RECORD_GAIN = 2.5;
+
 const pickMimeType = (): string =>
   MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? "";
 
@@ -55,6 +62,8 @@ export class TrackRecorder {
   private chunks: Blob[] = [];
 
   private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private gainNode: GainNode | null = null;
+  private mediaStreamDestination: MediaStreamAudioDestinationNode | null = null;
   private analyser: AnalyserNode | null = null;
   private analyserData: Uint8Array | null = null;
 
@@ -115,14 +124,23 @@ export class TrackRecorder {
       throw new Error("AudioContext em tempo real indisponível.");
     }
     this.sourceNode = realtimeContext.createMediaStreamSource(stream);
+    this.gainNode = realtimeContext.createGain();
+    this.gainNode.gain.value = RECORD_GAIN;
+    this.mediaStreamDestination = realtimeContext.createMediaStreamDestination();
+
+    // Boost the mic signal before it reaches the encoder.
+    this.sourceNode.connect(this.gainNode);
+    this.gainNode.connect(this.mediaStreamDestination);
+
+    // Level meter reads the boosted signal so the UI reflects what is recorded.
     this.analyser = realtimeContext.createAnalyser();
     this.analyser.fftSize = 2048;
-    this.sourceNode.connect(this.analyser);
+    this.gainNode.connect(this.analyser);
     this.analyserData = new Uint8Array(this.analyser.fftSize);
 
     const mimeType = pickMimeType();
     this.mediaRecorder = new MediaRecorder(
-      stream,
+      this.mediaStreamDestination.stream,
       mimeType ? { mimeType } : undefined,
     );
     this.chunks = [];
@@ -231,15 +249,19 @@ export class TrackRecorder {
   private teardownCapture(): void {
     this.sourceNode?.disconnect();
     this.sourceNode = null;
+    this.gainNode?.disconnect();
+    this.gainNode = null;
     this.analyser?.disconnect();
     this.analyser = null;
     this.analyserData = null;
+    // The original mic stream is not needed once recording stops.
     if (this.stream) {
       for (const track of this.stream.getTracks()) {
         track.stop();
       }
       this.stream = null;
     }
+    this.mediaStreamDestination = null;
     this.mediaRecorder = null;
     this.chunks = [];
   }
