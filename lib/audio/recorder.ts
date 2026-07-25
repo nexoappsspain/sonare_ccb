@@ -39,11 +39,17 @@ const MIME_CANDIDATES = [
   "audio/ogg;codecs=opus",
 ] as const;
 
-/** Musical-quality capture: no browser voice processing. */
+/**
+ * Default microphone constraints. We previously disabled voice processing to
+ * preserve musical quality, but on mobile that forces the OS into a capture
+ * mode that reroutes playback away from headphones. Using the browser default
+ * keeps the audio session in a communication-friendly state while still
+ * recording the microphone.
+ */
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
 };
 
 /**
