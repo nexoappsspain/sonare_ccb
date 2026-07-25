@@ -23,6 +23,7 @@ import {
   ArrowLeft,
   Circle,
   Download,
+  Headphones,
   Loader2,
   Piano,
   Plus,
@@ -42,6 +43,10 @@ import { audioEngine } from "@/lib/audio/engine";
 import { metronome } from "@/lib/audio/metronome";
 import { checkMicSupport, TrackRecorder } from "@/lib/audio/recorder";
 import {
+  checkMicrophonePermission,
+  requestMicrophoneAccess,
+} from "@/lib/audio/micPermission";
+import {
   createSamplerInstrument,
   releaseNote,
   type SamplerInstrument,
@@ -60,6 +65,7 @@ import { MetronomePanel } from "@/components/studio/Metronome";
 import { FxRack } from "@/components/studio/FxRack";
 import { ExportDialog } from "@/components/studio/ExportDialog";
 import { TakeChoiceDialog } from "@/components/studio/TakeChoiceDialog";
+import { MicPermissionDialog } from "@/components/studio/MicPermissionDialog";
 
 export interface StudioShellProps {
   /** When present, loads that project from IndexedDB; otherwise ensures a project exists. */
@@ -118,6 +124,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   const removeTrack = useProjectStore((state) => state.removeTrack);
 
   const [notFound, setNotFound] = useState(false);
+  const [audioStarted, setAudioStarted] = useState(false);
+  const [micDialogMode, setMicDialogMode] = useState<"prompt" | "denied" | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [metronomeOn, setMetronomeOn] = useState(false);
   const [metronomeVolume, setMetronomeVolume] = useState(0.8);
@@ -282,6 +290,11 @@ export function StudioShell({ projectId }: StudioShellProps) {
     }
   }, []);
 
+  const startAudio = useCallback(async () => {
+    await audioEngine.ensureStarted();
+    setAudioStarted(true);
+  }, []);
+
   const toggleMetronome = useCallback(async () => {
     if (metronomeOnRef.current) {
       metronome.stop();
@@ -444,19 +457,32 @@ export function StudioShell({ projectId }: StudioShellProps) {
       toast.error(t("micNotSupported"));
       return;
     }
+
+    // Check microphone permission before doing anything else.
+    const micState = await checkMicrophonePermission();
+    if (micState === "denied") {
+      setMicDialogMode("denied");
+      return;
+    }
+    if (micState === "prompt") {
+      setMicDialogMode("prompt");
+      return;
+    }
+
+    // Permission already granted (or unknown on unsupported browsers) — proceed.
+    await startRecordingAfterPermission();
+  }, [t, toast]);
+
+  /** Actual recording logic, called after mic permission is confirmed. */
+  const startRecordingAfterPermission = useCallback(async () => {
+    const state = useProjectStore.getState();
+    const currentProject = state.project;
+    if (!currentProject || startingRecordingRef.current || recorderRef.current?.isRecording) {
+      return;
+    }
     startingRecordingRef.current = true;
     try {
       await audioEngine.ensureStarted();
-
-      // Warm up the mic permission so the browser prompt never appears
-      // while playback is already rolling (would break count-in alignment).
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        for (const mediaTrack of stream.getTracks()) mediaTrack.stop();
-      } catch {
-        toast.error(t("micDenied"));
-        return;
-      }
 
       const bpm = currentProject.bpm;
       const countInBeats = metronomeOnRef.current ? COUNT_IN_BEATS : 0;
@@ -532,6 +558,11 @@ export function StudioShell({ projectId }: StudioShellProps) {
       void startRecording();
     }
   }, [startRecording, stopRecording]);
+
+  const handleMicGranted = useCallback(() => {
+    setMicDialogMode(null);
+    void startRecordingAfterPermission();
+  }, [startRecordingAfterPermission]);
 
   /* ---------------------------- Import (audio) ---------------------------- */
 
@@ -935,6 +966,38 @@ export function StudioShell({ projectId }: StudioShellProps) {
         onStack={() => void commitTakeChoice("stack")}
         onCancel={() => void cancelTakeChoice()}
       />
+
+      {/* Mic permission dialog */}
+      {micDialogMode && (
+        <MicPermissionDialog
+          mode={micDialogMode}
+          onClose={() => setMicDialogMode(null)}
+          onGranted={handleMicGranted}
+        />
+      )}
+
+      {/* AudioContext activation overlay — blocks the studio until the user
+          clicks, ensuring Tone.start() is called from a genuine user gesture. */}
+      {!audioStarted && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 p-6"
+          onClick={() => void startAudio()}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              void startAudio();
+            }
+          }}
+        >
+          <Headphones className="mb-4 h-12 w-12 text-neutral-300" aria-hidden="true" />
+          <p className="mb-2 text-center text-lg font-semibold text-neutral-100">
+            {t("audioStartTitle")}
+          </p>
+          <p className="text-center text-sm text-neutral-400">{t("audioStartHint")}</p>
+        </div>
+      )}
     </div>
   );
 }
