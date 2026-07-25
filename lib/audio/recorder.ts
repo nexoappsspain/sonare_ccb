@@ -63,20 +63,21 @@ const pickMimeType = (): string =>
   MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? "";
 
 /**
- * Switches the browser audio session to "playback-and-record" while recording
- * on mobile. Without this, activating the microphone can force the OS to move
+ * Switches the browser audio session to "play-and-record" while recording on
+ * mobile. Without this, activating the microphone can force the OS to move
  * playback from headphones/earphones back to the device speaker, making it
  * impossible to monitor the backing track while overdubbing.
+ *
+ * Safari/iOS expects the older "play-and-record" name rather than the spec's
+ * "playback-and-record"; restoring to "playback" after recording keeps normal
+ * media playback working.
  */
 class RecordingAudioSession {
-  private previousType: AudioSession["type"] | null = null;
-
   enter(): void {
     const session = navigator.audioSession;
     if (!session) return;
-    this.previousType = session.type;
     try {
-      session.type = "playback-and-record";
+      session.type = "play-and-record";
     } catch {
       // Some browsers expose the API but reject the type change — ignore.
     }
@@ -84,13 +85,12 @@ class RecordingAudioSession {
 
   leave(): void {
     const session = navigator.audioSession;
-    if (!session || !this.previousType) return;
+    if (!session) return;
     try {
-      session.type = this.previousType;
+      session.type = "playback";
     } catch {
       // Ignore restore failures.
     }
-    this.previousType = null;
   }
 }
 

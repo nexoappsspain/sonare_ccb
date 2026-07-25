@@ -15,6 +15,7 @@ interface AudioSession {
     | "auto"
     | "playback"
     | "playback-and-record"
+    | "play-and-record"
     | "ambient"
     | "solo"
     | "solo-ambient";
