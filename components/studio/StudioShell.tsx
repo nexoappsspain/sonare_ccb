@@ -139,6 +139,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorderRef = useRef<TrackRecorder | null>(null);
   const startingRecordingRef = useRef(false);
+  /** Once mic access succeeds in this page session, skip the permission dialog. */
+  const micGrantedInSessionRef = useRef(false);
   const recordingTrackIdRef = useRef<string | null>(null);
   const recordedOffsetRef = useRef(0);
   const pendingTakeRef = useRef<PendingTake | null>(null);
@@ -440,6 +442,7 @@ export function StudioShell({ projectId }: StudioShellProps) {
     } finally {
       // Monitoring must ALWAYS stop (stop/cancel/error paths).
       recorder.stopMonitoring();
+      recorder.dispose();
       recorderRef.current = null;
     }
   }, [loadRecordedBlob, tErrors, toast]);
@@ -457,20 +460,22 @@ export function StudioShell({ projectId }: StudioShellProps) {
       return;
     }
 
-    // Check microphone permission before doing anything else. Browsers that do
-    // not support the Permissions API return "unknown" — treat that as "prompt"
-    // so the user is never hit with a native permission request without warning.
-    const micState = await getMicPermission();
-    if (micState === "denied") {
-      setMicDialogMode("denied");
-      return;
-    }
-    if (micState === "prompt" || micState === "unknown") {
-      setMicDialogMode("prompt");
-      return;
+    // Check microphone permission before doing anything else. If we already
+    // succeeded once in this page session, skip the dialog to avoid flaky
+    // "unknown" states from the Permissions API after deleting/re-recording.
+    if (!micGrantedInSessionRef.current) {
+      const micState = await getMicPermission();
+      if (micState === "denied") {
+        setMicDialogMode("denied");
+        return;
+      }
+      if (micState === "prompt" || micState === "unknown") {
+        setMicDialogMode("prompt");
+        return;
+      }
+      micGrantedInSessionRef.current = true;
     }
 
-    // Permission already granted — proceed.
     await startRecordingAfterPermission();
   }, [t, toast]);
 
@@ -522,8 +527,9 @@ export function StudioShell({ projectId }: StudioShellProps) {
         }
       }
 
-      // Record onto the armed audio track when there is one; otherwise
-      // create a fresh track (previous behavior).
+      // Record onto the armed audio track when there is one; otherwise prefer
+      // an existing empty audio track (no audioKey) so the user does not end up
+      // with multiple blank tracks after pressing "+" and then record.
       const armedId = useProjectStore.getState().armedTrackId;
       const armedTrack = armedId
         ? useProjectStore
@@ -535,15 +541,30 @@ export function StudioShell({ projectId }: StudioShellProps) {
       if (armedTrack) {
         recordingTrackIdRef.current = armedTrack.id;
       } else {
-        const track = state.addTrack({
-          name: t("trackDefaultName", { count: currentProject.tracks.length + 1 }),
-          kind: "audio",
-        });
-        recordingTrackIdRef.current = track?.id ?? null;
+        const emptyTrack = useProjectStore
+          .getState()
+          .project?.tracks.find(
+            (candidate) => candidate.kind === "audio" && !candidate.audioKey,
+          );
+        if (emptyTrack) {
+          recordingTrackIdRef.current = emptyTrack.id;
+        } else {
+          const track = state.addTrack({
+            name: t("trackDefaultName", { count: currentProject.tracks.length + 1 }),
+            kind: "audio",
+          });
+          recordingTrackIdRef.current = track?.id ?? null;
+        }
       }
     } catch (error) {
       console.error(error);
-      toast.error(t("micDenied"));
+      const message =
+        error instanceof Error && error.message.includes("microphone-denied")
+          ? t("micDenied")
+          : error instanceof Error && error.message.includes("AudioContext")
+            ? tErrors("generic")
+            : t("micDenied");
+      toast.error(message);
       if (!wasPlayingRef.current) audioEngine.pause();
       recorderRef.current?.dispose();
       recorderRef.current = null;
@@ -552,7 +573,7 @@ export function StudioShell({ projectId }: StudioShellProps) {
     } finally {
       startingRecordingRef.current = false;
     }
-  }, [t, toast]);
+  }, [t, tErrors, toast]);
 
   const toggleRecord = useCallback(() => {
     if (recorderRef.current?.isRecording || startingRecordingRef.current) {
@@ -564,6 +585,7 @@ export function StudioShell({ projectId }: StudioShellProps) {
 
   const handleMicGranted = useCallback(() => {
     setMicDialogMode(null);
+    micGrantedInSessionRef.current = true;
     void startRecordingAfterPermission();
   }, [startRecordingAfterPermission]);
 
