@@ -134,7 +134,11 @@
     "micStepsSafari1": "En el menú Safari, ve a Configuración del sitio > Micrófono.",
     "micStepsSafari2": "Encuentra este sitio y selecciona \"Permitir\".",
     "micStepsSafari3": "Vuelve aquí y haz clic en \"Intentar de nuevo\".",
-    "micReload": "Intentar de nuevo"
+    "micReload": "Intentar de nuevo",
+    "headphoneWarningTitle": "Conecta auriculares",
+    "headphoneWarningBody": "Para grabar encima de la reproducción sin que el micrófono capte el sonido del altavoz, conecta auriculares.",
+    "headphonesConnected": "Conecté auriculares",
+    "recordWithoutPlayback": "Grabar sin reproducción"
   },
   "fx": {
     "title": "Cadena de efectos",

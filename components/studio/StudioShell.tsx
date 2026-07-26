@@ -65,6 +65,7 @@ import { FxRack } from "@/components/studio/FxRack";
 import { ExportDialog } from "@/components/studio/ExportDialog";
 import { TakeChoiceDialog } from "@/components/studio/TakeChoiceDialog";
 import { MicPermissionDialog } from "@/components/studio/MicPermissionDialog";
+import { HeadphoneWarningDialog } from "@/components/studio/HeadphoneWarningDialog";
 
 export interface StudioShellProps {
   /** When present, loads that project from IndexedDB; otherwise ensures a project exists. */
@@ -96,6 +97,26 @@ const snapshotTrack = (track: Track): TrackSnapshot => ({
   trimEnd: track.trimEnd,
   offset: track.offset,
 });
+
+/**
+ * Best-effort headphone detection. enumerateDevices() only returns meaningful
+ * labels after the user has granted audio permissions once.
+ */
+async function detectHeadphones(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+    return false;
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const outputs = devices.filter((device) => device.kind === "audiooutput");
+    // Only the default system output -> assume built-in speaker.
+    if (outputs.length <= 1) return false;
+    const headphoneLabels = /headphone|headset|earphone|earbud|airpods|bluetooth|wireless/i;
+    return outputs.some((device) => headphoneLabels.test(device.label));
+  } catch {
+    return false;
+  }
+}
 
 /** Recording that landed on a track which already had audio — awaits the
     replace/stack/cancel choice. The new Blob lives only in IndexedDB. */
@@ -133,6 +154,7 @@ export function StudioShell({ projectId }: StudioShellProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const [deleteTrackId, setDeleteTrackId] = useState<string | null>(null);
   const [takeDialogOpen, setTakeDialogOpen] = useState(false);
+  const [headphoneDialogOpen, setHeadphoneDialogOpen] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
 
   const initRef = useRef(false);
@@ -145,6 +167,10 @@ export function StudioShell({ projectId }: StudioShellProps) {
   const recordedOffsetRef = useRef(0);
   const pendingTakeRef = useRef<PendingTake | null>(null);
   const wasPlayingRef = useRef(false);
+  /** Ids of the armed tracks that are currently being recorded. */
+  const recordingArmedIdsRef = useRef<string[]>([]);
+  /** Snapshot of the mute state of armed tracks before recording (for overdub). */
+  const armedMuteSnapshotRef = useRef<Map<string, boolean>>(new Map());
   const midiRef = useRef<MidiManager | null>(null);
   const samplersRef = useRef<Map<string, { samplerId: SamplerId; instrument: SamplerInstrument }>>(
     new Map(),
@@ -348,6 +374,8 @@ export function StudioShell({ projectId }: StudioShellProps) {
       const pending = pendingTakeRef.current;
       pendingTakeRef.current = null;
       setTakeDialogOpen(false);
+      const armedIds = recordingArmedIdsRef.current;
+      recordingArmedIdsRef.current = [];
       if (!pending) return;
       const state = useProjectStore.getState();
       const track = state.project?.tracks.find(
@@ -369,17 +397,24 @@ export function StudioShell({ projectId }: StudioShellProps) {
                 },
               ]
             : track?.takes;
-        // Reserve the load key before the store update triggers the load effect.
-        loadPromisesRef.current.set(
-          `${pending.trackId}:${pending.newAudioKey}`,
-          Promise.resolve(),
-        );
-        state.updateTrack(pending.trackId, {
-          audioKey: pending.newAudioKey,
-          offset: pending.offset,
-          ...(takes ? { takes } : {}),
-        });
-        await loadRecordedBlob(pending.trackId, pending.newAudioKey);
+
+        // Apply the recorded blob to every armed track. Only the track that
+        // already had audio gets the replace/stack decision; empty armed tracks
+        // simply receive the new take.
+        for (const id of armedIds) {
+          const armedTrack = state.project?.tracks.find((candidate) => candidate.id === id);
+          if (!armedTrack || armedTrack.kind !== "audio") continue;
+
+          const isTarget = id === pending.trackId;
+          const trackTakes = isTarget ? takes : armedTrack.takes;
+          loadPromisesRef.current.set(`${id}:${pending.newAudioKey}`, Promise.resolve());
+          state.updateTrack(id, {
+            audioKey: pending.newAudioKey,
+            offset: pending.offset,
+            ...(trackTakes ? { takes: trackTakes } : {}),
+          });
+          await loadRecordedBlob(id, pending.newAudioKey);
+        }
       } catch (error) {
         console.error(error);
         toast.error(tErrors("generic"));
@@ -405,37 +440,51 @@ export function StudioShell({ projectId }: StudioShellProps) {
     const recorder = recorderRef.current;
     if (!recorder) return;
     setIsRecording(false);
+
+    // Restore the mute state of armed tracks before anything else.
+    for (const [id, muted] of armedMuteSnapshotRef.current) {
+      audioEngine.setMute(id, muted);
+    }
+    armedMuteSnapshotRef.current.clear();
+
     try {
       const blob = await recorder.stop();
       if (!wasPlayingRef.current) audioEngine.pause();
-      const trackId = recordingTrackIdRef.current;
-      recordingTrackIdRef.current = null;
-      if (!trackId || blob.size === 0) return;
+      const armedIds = recordingArmedIdsRef.current;
+      recordingArmedIdsRef.current = [];
+      if (armedIds.length === 0 || blob.size === 0) return;
 
       const audioKey = crypto.randomUUID();
       await saveAudioBlob(audioKey, blob);
       const offset = recordedOffsetRef.current;
 
-      // Recording onto an armed track that already has audio: ask whether
-      // to replace the current take or stack the previous one.
-      const existingTrack = useProjectStore
-        .getState()
-        .project?.tracks.find((candidate) => candidate.id === trackId);
-      if (existingTrack && existingTrack.audioKey) {
+      // If any armed track already has audio, ask once whether to replace or
+      // stack. The same recorded blob is applied to all armed tracks.
+      const state = useProjectStore.getState();
+      const existingArmedTrack = state.project?.tracks.find(
+        (candidate) =>
+          armedIds.includes(candidate.id) && candidate.kind === "audio" && candidate.audioKey,
+      );
+      if (existingArmedTrack) {
         pendingTakeRef.current = {
-          trackId,
+          trackId: existingArmedTrack.id,
           newAudioKey: audioKey,
-          previousAudioKey: existingTrack.audioKey,
+          previousAudioKey: existingArmedTrack.audioKey,
           offset,
         };
+        // Remember the full armed list so the take choice can apply the blob
+        // to every armed track after the user decides.
+        recordingArmedIdsRef.current = armedIds;
         setTakeDialogOpen(true);
         return;
       }
 
-      // Reserve the load key before the store update triggers the load effect.
-      loadPromisesRef.current.set(`${trackId}:${audioKey}`, Promise.resolve());
-      useProjectStore.getState().updateTrack(trackId, { audioKey, offset });
-      await loadRecordedBlob(trackId, audioKey);
+      // Apply the recorded blob to every armed / solo track.
+      for (const id of armedIds) {
+        loadPromisesRef.current.set(`${id}:${audioKey}`, Promise.resolve());
+        state.updateTrack(id, { audioKey, offset });
+        await loadRecordedBlob(id, audioKey);
+      }
     } catch (error) {
       console.error(error);
       toast.error(tErrors("generic"));
@@ -446,6 +495,120 @@ export function StudioShell({ projectId }: StudioShellProps) {
       recorderRef.current = null;
     }
   }, [loadRecordedBlob, tErrors, toast]);
+
+  /** Actual recording logic, called after mic permission is confirmed. */
+  const startRecordingAfterPermission = useCallback(async () => {
+    // Resume the AudioContext synchronously while still inside the user gesture.
+    void Tone.start();
+    const state = useProjectStore.getState();
+    const currentProject = state.project;
+    if (!currentProject || startingRecordingRef.current || recorderRef.current?.isRecording) {
+      return;
+    }
+    startingRecordingRef.current = true;
+    try {
+      await audioEngine.ensureStarted();
+
+      const bpm = currentProject.bpm;
+      const countInBeats = metronomeOnRef.current ? COUNT_IN_BEATS : 0;
+      const countInSeconds = countInBeats * (60 / bpm);
+      const startPosition = audioEngine.position;
+      wasPlayingRef.current = audioEngine.state === "started";
+
+      // Decide recording mode based on armed tracks and existing playback.
+      const armedIds = currentProject.tracks
+        .filter((track) => track.kind === "audio" && state.armedTrackIds.includes(track.id))
+        .map((track) => track.id);
+      const hasPlayback = currentProject.tracks.some(
+        (track) => track.kind === "audio" && track.audioKey,
+      );
+      const overdubMode = armedIds.length > 0 && hasPlayback;
+      const soloMode = armedIds.length === 0;
+
+      // In overdub mode, mute the armed tracks during playback so the musician
+      // only hears the backing tracks while the mic is open.
+      armedMuteSnapshotRef.current.clear();
+      if (overdubMode) {
+        for (const id of armedIds) {
+          const track = currentProject.tracks.find((candidate) => candidate.id === id);
+          if (track) {
+            armedMuteSnapshotRef.current.set(id, track.mute);
+            audioEngine.setMute(id, true);
+          }
+        }
+      }
+
+      const recorder = new TrackRecorder();
+      recorderRef.current = recorder;
+      const startPromise = recorder.start({ countIn: countInBeats, bpm });
+
+      if (metronomeOnRef.current) {
+        metronome.setBpm(bpm);
+        try {
+          await metronome.start();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      // Solo mode (no armed tracks, no playback) records the microphone dry.
+      // Otherwise, start the transport so the backing track / count-in is heard.
+      if (!soloMode) {
+        await audioEngine.play();
+      }
+      setIsRecording(true);
+      recordedOffsetRef.current = startPosition + countInSeconds;
+
+      await startPromise;
+      // Aborted during the count-in (user pressed R again).
+      if (recorderRef.current !== recorder || !recorder.isRecording) return;
+
+      // Live monitoring (mic -> speakers through a low gain) while recording.
+      if (useMonitoringStore.getState().enabled) {
+        try {
+          await recorder.startMonitoring();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      // Resolve target track(s):
+      // - Overdub / armed-solo: record into all armed audio tracks.
+      // - Solo: create a fresh track.
+      if (armedIds.length > 0) {
+        recordingArmedIdsRef.current = armedIds;
+      } else {
+        const emptyTrack = currentProject.tracks.find(
+          (candidate) => candidate.kind === "audio" && !candidate.audioKey,
+        );
+        if (emptyTrack) {
+          recordingArmedIdsRef.current = [emptyTrack.id];
+        } else {
+          const track = state.addTrack({
+            name: t("trackDefaultName", { count: currentProject.tracks.length + 1 }),
+            kind: "audio",
+          });
+          recordingArmedIdsRef.current = track ? [track.id] : [];
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      const message =
+        error instanceof Error && error.message.includes("microphone-denied")
+          ? t("micDenied")
+          : error instanceof Error && error.message.includes("AudioContext")
+            ? tErrors("generic")
+            : t("micDenied");
+      toast.error(message);
+      if (!wasPlayingRef.current) audioEngine.pause();
+      recorderRef.current?.dispose();
+      recorderRef.current = null;
+      recordingArmedIdsRef.current = [];
+      setIsRecording(false);
+    } finally {
+      startingRecordingRef.current = false;
+    }
+  }, [t, tErrors, toast]);
 
   const startRecording = useCallback(async () => {
     // Resume the AudioContext synchronously while still inside the user gesture.
@@ -476,104 +639,25 @@ export function StudioShell({ projectId }: StudioShellProps) {
       micGrantedInSessionRef.current = true;
     }
 
+    const armedIds = currentProject.tracks
+      .filter((track) => track.kind === "audio" && state.armedTrackIds.includes(track.id))
+      .map((track) => track.id);
+    const hasPlayback = currentProject.tracks.some(
+      (track) => track.kind === "audio" && track.audioKey,
+    );
+
+    // Overdub mode: recording armed tracks while other tracks play back.
+    // Ask the user to use headphones so the mic does not pick up the speaker.
+    if (armedIds.length > 0 && hasPlayback) {
+      const hasHeadphones = await detectHeadphones();
+      if (!hasHeadphones) {
+        setHeadphoneDialogOpen(true);
+        return;
+      }
+    }
+
     await startRecordingAfterPermission();
-  }, [t, toast]);
-
-  /** Actual recording logic, called after mic permission is confirmed. */
-  const startRecordingAfterPermission = useCallback(async () => {
-    // Resume the AudioContext synchronously while still inside the user gesture.
-    void Tone.start();
-    const state = useProjectStore.getState();
-    const currentProject = state.project;
-    if (!currentProject || startingRecordingRef.current || recorderRef.current?.isRecording) {
-      return;
-    }
-    startingRecordingRef.current = true;
-    try {
-      await audioEngine.ensureStarted();
-
-      const bpm = currentProject.bpm;
-      const countInBeats = metronomeOnRef.current ? COUNT_IN_BEATS : 0;
-      const countInSeconds = countInBeats * (60 / bpm);
-      const startPosition = audioEngine.position;
-      wasPlayingRef.current = audioEngine.state === "started";
-
-      const recorder = new TrackRecorder();
-      recorderRef.current = recorder;
-      const startPromise = recorder.start({ countIn: countInBeats, bpm });
-
-      if (metronomeOnRef.current) {
-        metronome.setBpm(bpm);
-        try {
-          await metronome.start();
-        } catch (error) {
-          console.error(error);
-        }
-      }
-      await audioEngine.play();
-      setIsRecording(true);
-      recordedOffsetRef.current = startPosition + countInSeconds;
-
-      await startPromise;
-      // Aborted during the count-in (user pressed R again).
-      if (recorderRef.current !== recorder || !recorder.isRecording) return;
-
-      // Live monitoring (mic -> speakers through a low gain) while recording.
-      if (useMonitoringStore.getState().enabled) {
-        try {
-          await recorder.startMonitoring();
-        } catch (error) {
-          console.error(error);
-        }
-      }
-
-      // Record onto the armed audio track when there is one; otherwise prefer
-      // an existing empty audio track (no audioKey) so the user does not end up
-      // with multiple blank tracks after pressing "+" and then record.
-      const armedId = useProjectStore.getState().armedTrackId;
-      const armedTrack = armedId
-        ? useProjectStore
-            .getState()
-            .project?.tracks.find(
-              (candidate) => candidate.id === armedId && candidate.kind === "audio",
-            )
-        : undefined;
-      if (armedTrack) {
-        recordingTrackIdRef.current = armedTrack.id;
-      } else {
-        const emptyTrack = useProjectStore
-          .getState()
-          .project?.tracks.find(
-            (candidate) => candidate.kind === "audio" && !candidate.audioKey,
-          );
-        if (emptyTrack) {
-          recordingTrackIdRef.current = emptyTrack.id;
-        } else {
-          const track = state.addTrack({
-            name: t("trackDefaultName", { count: currentProject.tracks.length + 1 }),
-            kind: "audio",
-          });
-          recordingTrackIdRef.current = track?.id ?? null;
-        }
-      }
-    } catch (error) {
-      console.error(error);
-      const message =
-        error instanceof Error && error.message.includes("microphone-denied")
-          ? t("micDenied")
-          : error instanceof Error && error.message.includes("AudioContext")
-            ? tErrors("generic")
-            : t("micDenied");
-      toast.error(message);
-      if (!wasPlayingRef.current) audioEngine.pause();
-      recorderRef.current?.dispose();
-      recorderRef.current = null;
-      recordingTrackIdRef.current = null;
-      setIsRecording(false);
-    } finally {
-      startingRecordingRef.current = false;
-    }
-  }, [t, tErrors, toast]);
+  }, [t, toast, startRecordingAfterPermission]);
 
   const toggleRecord = useCallback(() => {
     if (recorderRef.current?.isRecording || startingRecordingRef.current) {
@@ -588,6 +672,21 @@ export function StudioShell({ projectId }: StudioShellProps) {
     micGrantedInSessionRef.current = true;
     void startRecordingAfterPermission();
   }, [startRecordingAfterPermission]);
+
+  const handleHeadphonesConnected = useCallback(() => {
+    setHeadphoneDialogOpen(false);
+    void startRecordingAfterPermission();
+  }, [startRecordingAfterPermission]);
+
+  const handleRecordWithoutPlayback = useCallback(() => {
+    setHeadphoneDialogOpen(false);
+    useProjectStore.getState().clearArmedTracks();
+    void startRecordingAfterPermission();
+  }, [startRecordingAfterPermission]);
+
+  const handleCancelHeadphoneWarning = useCallback(() => {
+    setHeadphoneDialogOpen(false);
+  }, []);
 
   /* ---------------------------- Import (audio) ---------------------------- */
 
@@ -1006,6 +1105,15 @@ export function StudioShell({ projectId }: StudioShellProps) {
           mode={micDialogMode}
           onClose={() => setMicDialogMode(null)}
           onGranted={handleMicGranted}
+        />
+      )}
+
+      {/* Headphone warning for overdub without headphones */}
+      {headphoneDialogOpen && (
+        <HeadphoneWarningDialog
+          onConnect={handleHeadphonesConnected}
+          onRecordWithoutPlayback={handleRecordWithoutPlayback}
+          onCancel={handleCancelHeadphoneWarning}
         />
       )}
 

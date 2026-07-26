@@ -134,7 +134,11 @@
     "micStepsSafari1": "No menu Safari, vá em Configurações do Site > Microfone.",
     "micStepsSafari2": "Encontre este site e selecione \"Permitir\".",
     "micStepsSafari3": "Volte para cá e clique em \"Tentar novamente\".",
-    "micReload": "Tentar novamente"
+    "micReload": "Tentar novamente",
+    "headphoneWarningTitle": "Conecte fones de ouvido",
+    "headphoneWarningBody": "Para gravar por cima do playback sem que o microfone capture o som do alto-falante, conecte fones de ouvido.",
+    "headphonesConnected": "Conectei fones",
+    "recordWithoutPlayback": "Gravar sem playback"
   },
   "fx": {
     "title": "Cadeia de efeitos",

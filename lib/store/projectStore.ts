@@ -34,8 +34,8 @@ interface ProjectState {
   project: Project | null;
   isDirty: boolean;
   selectedTrackId: string | null;
-  /** Track record-armed for the next recording (null = record to a new track). */
-  armedTrackId: string | null;
+  /** Audio tracks record-armed for the next recording (empty = solo/new track). */
+  armedTrackIds: string[];
   hydrated: boolean;
 
   newProject: (name: string, bpm?: number) => void;
@@ -47,7 +47,8 @@ interface ProjectState {
   removeTrack: (id: string) => void;
   moveTrack: (id: string, dir: "up" | "down") => void;
   setSelectedTrack: (id: string | null) => void;
-  setArmedTrack: (id: string | null) => void;
+  toggleArmedTrack: (id: string) => void;
+  clearArmedTracks: () => void;
   markSaved: () => void;
   reset: () => void;
 }
@@ -66,7 +67,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   project: null,
   isDirty: false,
   selectedTrackId: null,
-  armedTrackId: null,
+  armedTrackIds: [],
   hydrated: false,
 
   newProject: (name, bpm = DEFAULT_BPM) => {
@@ -83,7 +84,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       project,
       isDirty: true,
       selectedTrackId: null,
-      armedTrackId: null,
+      armedTrackIds: [],
       hydrated: true,
     });
     void saveProject(project).then(() => get().markSaved());
@@ -96,7 +97,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         project: null,
         isDirty: false,
         selectedTrackId: null,
-        armedTrackId: null,
+        armedTrackIds: [],
         hydrated: true,
       });
       return false;
@@ -105,7 +106,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       project,
       isDirty: false,
       selectedTrackId: null,
-      armedTrackId: null,
+      armedTrackIds: [],
       hydrated: true,
     });
     return true;
@@ -180,7 +181,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   removeTrack: (id) => {
-    const { project, selectedTrackId, armedTrackId } = get();
+    const { project, selectedTrackId, armedTrackIds } = get();
     if (!project) return;
 
     const track = project.tracks.find((t) => t.id === id);
@@ -201,7 +202,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })),
       isDirty: true,
       selectedTrackId: selectedTrackId === id ? null : selectedTrackId,
-      armedTrackId: armedTrackId === id ? null : armedTrackId,
+      armedTrackIds: armedTrackIds.filter((armedId) => armedId !== id),
     });
   },
 
@@ -225,11 +226,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   setSelectedTrack: (id) => set({ selectedTrackId: id }),
 
-  // Arming a track disarms the others; arming the same track again disarms it.
-  setArmedTrack: (id) =>
+  // Toggle a track's record-arm state. Multiple audio tracks can be armed.
+  toggleArmedTrack: (id) =>
     set({
-      armedTrackId: id === null ? null : get().armedTrackId === id ? null : id,
+      armedTrackIds: get().armedTrackIds.includes(id)
+        ? get().armedTrackIds.filter((armedId) => armedId !== id)
+        : [...get().armedTrackIds, id],
     }),
+
+  clearArmedTracks: () => set({ armedTrackIds: [] }),
 
   markSaved: () => set({ isDirty: false }),
 
@@ -238,7 +243,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       project: null,
       isDirty: false,
       selectedTrackId: null,
-      armedTrackId: null,
+      armedTrackIds: [],
       hydrated: false,
     }),
 }));

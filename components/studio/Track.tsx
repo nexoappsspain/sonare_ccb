@@ -53,8 +53,8 @@ export function TrackRow({ track, pxPerSec, onOpenFx }: TrackRowProps) {
   const removeTrack = useProjectStore((state) => state.removeTrack);
   const setSelectedTrack = useProjectStore((state) => state.setSelectedTrack);
   const isSelected = useProjectStore((state) => state.selectedTrackId === track.id);
-  const isArmed = useProjectStore((state) => state.armedTrackId === track.id);
-  const setArmedTrack = useProjectStore((state) => state.setArmedTrack);
+  const isArmed = useProjectStore((state) => state.armedTrackIds.includes(track.id));
+  const toggleArmedTrack = useProjectStore((state) => state.toggleArmedTrack);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -232,7 +232,7 @@ export function TrackRow({ track, pxPerSec, onOpenFx }: TrackRowProps) {
               size="sm"
               ariaLabel={`${t("recordArm")} — ${track.name}`}
               aria-pressed={isArmed}
-              onClick={() => setArmedTrack(track.id)}
+              onClick={() => toggleArmedTrack(track.id)}
               className={cn(isArmed && "animate-pulse bg-red-950 hover:bg-red-950")}
             >
               <Circle

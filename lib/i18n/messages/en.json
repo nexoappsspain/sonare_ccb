@@ -134,7 +134,11 @@
     "micStepsSafari1": "In the Safari menu, go to Settings for This Website > Microphone.",
     "micStepsSafari2": "Find this site and select \"Allow\".",
     "micStepsSafari3": "Come back here and click \"Try again\".",
-    "micReload": "Try again"
+    "micReload": "Try again",
+    "headphoneWarningTitle": "Connect headphones",
+    "headphoneWarningBody": "To record over the playback without the microphone picking up sound from the speaker, connect headphones.",
+    "headphonesConnected": "Headphones connected",
+    "recordWithoutPlayback": "Record without playback"
   },
   "fx": {
     "title": "Effects chain",
