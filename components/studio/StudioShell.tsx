@@ -449,7 +449,9 @@ export function StudioShell({ projectId }: StudioShellProps) {
 
     try {
       const blob = await recorder.stop();
-      if (!wasPlayingRef.current) audioEngine.pause();
+      // After recording, always return to the beginning so the user can press
+      // play and hear the whole take from the start together with the backing.
+      audioEngine.stop();
       const armedIds = recordingArmedIdsRef.current;
       recordingArmedIdsRef.current = [];
       if (armedIds.length === 0 || blob.size === 0) return;
@@ -600,7 +602,12 @@ export function StudioShell({ projectId }: StudioShellProps) {
             ? tErrors("generic")
             : t("micDenied");
       toast.error(message);
-      if (!wasPlayingRef.current) audioEngine.pause();
+      // Restore mute state on error so armed tracks do not stay silenced.
+      for (const [id, muted] of armedMuteSnapshotRef.current) {
+        audioEngine.setMute(id, muted);
+      }
+      armedMuteSnapshotRef.current.clear();
+      audioEngine.stop();
       recorderRef.current?.dispose();
       recorderRef.current = null;
       recordingArmedIdsRef.current = [];
